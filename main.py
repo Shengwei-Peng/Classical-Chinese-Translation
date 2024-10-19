@@ -132,23 +132,10 @@ def parse_args() -> argparse.Namespace:
         help="The alpha parameter for Lora scaling."
     )
     parser.add_argument(
-        "--lora_dropout",
-        type=float,
-        default=0.0,
-        help="The dropout probability for Lora layers."
-    )
-    parser.add_argument(
         "--target_modules",
         nargs='*',
         default=None,
         help="The names of the modules to apply the adapter to."
-    )
-    parser.add_argument(
-        "--strategy",
-        type=str,
-        default=None,
-        help="Strategy type for LLM prompt formatting.",
-        choices=["zero_shot", "few_shot"]
     )
     parser.add_argument(
         "--peft_path",
@@ -175,7 +162,6 @@ def parse_args() -> argparse.Namespace:
         }
         args.output_dir.mkdir(parents=True, exist_ok=True)
         (args.output_dir / "argument.json").write_text(json.dumps(args_dict, indent=4))
-
 
     return args
 
@@ -230,7 +216,6 @@ def main():
         peft_config = LoraConfig(
             r=args.r,
             lora_alpha=args.lora_alpha,
-            lora_dropout=args.lora_dropout,
             target_modules=args.target_modules,
             task_type="CAUSAL_LM",
         )
@@ -324,7 +309,7 @@ def main():
         with args.test_file.open("r", encoding="utf-8") as file:
             test_data = json.load(file)
 
-        instructions = [get_prompt(x["instruction"], strategy=args.strategy) for x in test_data]
+        instructions = [get_prompt(x["instruction"]) for x in test_data]
         predictions = []
 
         model.eval()
