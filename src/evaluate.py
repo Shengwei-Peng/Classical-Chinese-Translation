@@ -153,27 +153,27 @@ class Evaluator:
         if mean_perplexities:
             axes[0].plot(
                 instructions_count, mean_perplexities,
-                label="Mean Perplexity", marker='o', color='green'
+                label="Mean Perplexity", marker="o", color="green"
             )
             axes[0].set_title("Perplexity History")
             axes[0].set_xlabel("Instructions")
             axes[0].set_ylabel("Score")
-            axes[0].legend(loc='lower right')
+            axes[0].legend(loc="upper right")
             axes[0].grid(True)
 
         axes[1].plot(
             instructions_count, train_losses,
-            label="Training Loss", marker='o', color='blue'
+            label="Training Loss", marker="x", color="blue", linestyle="--"
             )
         if mean_losses:
             axes[1].plot(
                 instructions_count, mean_losses,
-                label="Mean Loss", marker='x', color='red'
+                label="Mean Loss", marker="o", color="red"
             )
         axes[1].set_title("Loss History")
         axes[1].set_xlabel("Instructions")
         axes[1].set_ylabel("Loss")
-        axes[1].legend(loc='upper right')
+        axes[1].legend(loc="upper right")
         axes[1].grid(True)
 
 
