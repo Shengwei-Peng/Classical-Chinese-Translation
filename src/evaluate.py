@@ -133,6 +133,13 @@ class Evaluator:
 
             self.history.append(result)
 
+    def save_history(self) -> None:
+        """save_history"""
+        if self.output_dir is not None and self.history:
+            history_file = self.output_dir / "history.json"
+            with open(history_file, "w", encoding="utf-8") as file:
+                json.dump(self.history, file, indent=4)
+
     def plot_learning_curves(self) -> None:
         """plot_learning_curves"""
         import matplotlib.pyplot as plt
@@ -176,14 +183,8 @@ class Evaluator:
         axes[1].legend(loc="upper right")
         axes[1].grid(True)
 
-
         plt.tight_layout()
 
         if self.output_dir is not None:
             plt.savefig(self.output_dir / "learning_curves.png")
             plt.close()
-
-        if self.output_dir is not None:
-            history_file = self.output_dir / "history.json"
-            with open(history_file, "w", encoding="utf-8") as file:
-                json.dump(self.history, file, indent=4)
