@@ -1,6 +1,7 @@
 """evaluate"""
 import json
 from pathlib import Path
+from typing import List, Dict, Optional
 
 import torch
 import numpy as np
@@ -13,10 +14,10 @@ class Evaluator:
         self,
         output_dir: Path,
         tokenizer: AutoTokenizer,
-        data: list = None,
+        data: Optional[List[Dict[str, str]]] = None,
         max_length: int = 2048,
         record_interval: int = 250,
-        ) -> None:
+    ) -> None:
         self.output_dir = output_dir
         self.tokenizer = tokenizer
         self.history = []
@@ -30,9 +31,9 @@ class Evaluator:
 
     def process_data(
         self,
-        data: list,
+        data: List[Dict[str, str]],
         max_length: int,
-        ) -> None:
+    ) -> None:
         """process_data"""
         data_size = len(data)
         instructions = [x["instruction"] for x in data]
@@ -64,7 +65,7 @@ class Evaluator:
         self.tokenized_instructions = tokenized_instructions
         self.output_masks = output_masks
 
-    def calculate_ppl(self, model: AutoModelForCausalLM) -> dict:
+    def calculate_ppl(self, model: AutoModelForCausalLM) -> Dict[str, float]:
         """calculate_ppl"""
         losses = []
         ppls = []
@@ -102,7 +103,7 @@ class Evaluator:
         self,
         train_loss: float,
         model: AutoModelForCausalLM,
-        ) -> None:
+    ) -> None:
         """add"""
         self.iteration_counter += 1
         self.train_loss_accumulator += train_loss

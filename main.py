@@ -11,7 +11,7 @@ from torch.optim import AdamW
 from tqdm.auto import tqdm
 from accelerate import Accelerator
 from accelerate.utils import set_seed
-from peft import LoraConfig, get_peft_model, PeftModel
+from peft import PeftModel, LoraConfig, get_peft_model
 from transformers import (
     AutoConfig,
     AutoTokenizer,
@@ -27,6 +27,12 @@ def parse_args() -> argparse.Namespace:
     """parse_args"""
     parser = argparse.ArgumentParser(
         description="Finetune a transformers model on a causal language modeling task"
+    )
+    parser.add_argument(
+        "--model_name_or_path",
+        type=str,
+        required=True,
+        help="Path to pretrained model or model identifier from huggingface.co/models."
     )
     parser.add_argument(
         "--train_file", 
@@ -53,25 +59,16 @@ def parse_args() -> argparse.Namespace:
         help="How much training data did you use?"
     )
     parser.add_argument(
-        "--model_name_or_path",
-        type=str,
-        default=None,
-        help="Path to pretrained model or model identifier from huggingface.co/models.",
-        required=True,
-    )
-    parser.add_argument(
         "--max_length",
         type=int,
         default=2048,
-        help=(
-            "The maximum total sequence length after tokenization."
-        ),
+        help="The maximum total sequence length after tokenization."
     )
     parser.add_argument(
         "--learning_rate",
         type=float,
         default=5e-5,
-        help="Initial learning rate (after the potential warmup period) to use.",
+        help="Initial learning rate (after the potential warmup period) to use."
     )
     parser.add_argument(
         "--num_train_epochs",
@@ -83,7 +80,13 @@ def parse_args() -> argparse.Namespace:
         "--gradient_accumulation_steps",
         type=int,
         default=1,
-        help="Number of updates steps to accumulate before performing a backward/update pass.",
+        help="Number of updates steps to accumulate before performing a backward/update pass."
+    )
+    parser.add_argument(
+        "--num_warmup_steps",
+        type=int,
+        default=0,
+        help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument(
         "--lr_scheduler_type",
@@ -96,22 +99,16 @@ def parse_args() -> argparse.Namespace:
         ],
     )
     parser.add_argument(
-        "--num_warmup_steps",
+        "--seed",
         type=int,
-        default=0,
-        help="Number of steps for the warmup in the lr scheduler."
+        default=11207330,
+        help="A seed for reproducible training."
     )
     parser.add_argument(
         "--output_dir", 
         type=Path,
         default=None,
         help="Where to store the final model."
-        )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=11207330,
-        help="A seed for reproducible training."
         )
     parser.add_argument(
         "--prediction_path",
@@ -140,12 +137,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--peft_path",
         type=str,
+        default=None,
         help="Path to the saved PEFT checkpoint."
-    )
-    parser.add_argument(
-        "--plot",
-        action="store_true",
-        help="Whether to plot learning curves."
     )
     parser.add_argument(
         "--record_interval",
@@ -153,6 +146,12 @@ def parse_args() -> argparse.Namespace:
         default=250,
         help="Number of training steps between each recording of perplexity and loss."
     )
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Whether to plot learning curves."
+    )
+
     args = parser.parse_args()
 
     if args.output_dir is not None:
@@ -165,12 +164,11 @@ def parse_args() -> argparse.Namespace:
 
     return args
 
-
 def preprocess_function(
     tokenizer: AutoTokenizer,
     data: List[Dict[str, str]],
     max_length: int = 2048,
-    ) -> Dict[str, List[torch.Tensor]]:
+) -> Dict[str, List[torch.Tensor]]:
     """preprocess_function"""
     data_size = len(data)
     instructions = [x["instruction"] for x in data]
@@ -196,8 +194,7 @@ def preprocess_function(
 
     return tokenized_instructions
 
-
-def main():
+def main() -> None:
     """main"""
     args = parse_args()
     set_seed(args.seed)
@@ -221,11 +218,12 @@ def main():
         )
         model = get_peft_model(model, peft_config)
 
+    model.print_trainable_parameters()
+
+    plot_data = None
     if args.plot_file and args.plot_file.exists():
         with args.plot_file.open("r", encoding="utf-8") as plot_file:
             plot_data = json.load(plot_file)
-    else:
-        plot_data = None
 
     evaluator = Evaluator(
         args.output_dir,
@@ -266,7 +264,7 @@ def main():
             range(num_training_steps), disable=not accelerator.is_local_main_process
         )
 
-        for _ in range(args.num_train_epochs):
+        for epoch in range(args.num_train_epochs):
             model.train()
             for i in range(num_train_samples):
                 with accelerator.accumulate(model):
@@ -288,24 +286,28 @@ def main():
                     progress_bar.update(1)
                     evaluator.add(loss.item(), model)
 
-    if args.output_dir is not None:
-        accelerator.wait_for_everyone()
-        unwrapped_model = accelerator.unwrap_model(model)
-        for param in unwrapped_model.parameters():
-            param.data = param.data.contiguous()
+            if args.output_dir is not None:
+                accelerator.wait_for_everyone()
+                unwrapped_model = accelerator.unwrap_model(model)
+                for param in unwrapped_model.parameters():
+                    param.data = param.data.contiguous()
 
-        unwrapped_model.save_pretrained(
-            args.output_dir,
-            is_main_process=accelerator.is_main_process,
-            save_function=accelerator.save
-        )
-        if accelerator.is_main_process:
-            tokenizer.save_pretrained(args.output_dir)
+                epoch_output_dir = args.output_dir / f"epoch_{epoch + 1}"
+                epoch_output_dir.mkdir(parents=True, exist_ok=True)
 
+                unwrapped_model.save_pretrained(
+                    epoch_output_dir,
+                    is_main_process=accelerator.is_main_process,
+                    save_function=accelerator.save
+                )
+                if accelerator.is_main_process:
+                    tokenizer.save_pretrained(epoch_output_dir)
+
+        evaluator.save_history()
         if args.plot:
             evaluator.plot_learning_curves()
 
-    if args.test_file:
+    if args.test_file and args.test_file.exists():
         with args.test_file.open("r", encoding="utf-8") as file:
             test_data = json.load(file)
 
