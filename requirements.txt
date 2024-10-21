@@ -1,4 +1,4 @@
-torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121
+torch==2.4.1 --index-url https://download.pytorch.org/whl/cu124
 transformers==4.45.1
 bitsandbytes==0.44.1
 peft==0.13.0
