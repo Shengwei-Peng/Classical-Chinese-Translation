@@ -86,6 +86,21 @@ pip install matplotlib
 ```
 
 ## 🔮 Inference
+To generate predictions using the fine-tuned model, use the following command:
+```sh
+python main.py \
+    --model_name_or_path zake7749/gemma-2-2b-it-chinese-kyara-dpo \
+    --peft_path ./gemma_2_2b \
+    --test_file ./data/private_test.json \
+    --prediction_path ./prediction.json
+```
+The predictions will be free of any special tokens (e.g., `<s>`, `</s>`) and prompts, and the output format will look like this:
+```json
+{
+    "id": "0094a447412998f6",
+    "output": "高祖初年，任內祕書侍禦中散。"
+}
+```
 
 ## 🙏 Acknowledgements
 
