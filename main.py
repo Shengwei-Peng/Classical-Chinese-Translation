@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--num_train_epochs",
         type=int,
-        default=3,
+        default=0,
         help="Total number of training epochs to perform."
     )
     parser.add_argument(
@@ -113,7 +113,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--prediction_path",
         type=Path,
-        default=Path("./predictions.txt"),
+        default=Path("./prediction.json"),
         help="Path to the output prediction file."
     )
     parser.add_argument(
@@ -150,6 +150,12 @@ def parse_args() -> argparse.Namespace:
         "--plot",
         action="store_true",
         help="Whether to plot learning curves."
+    )
+    parser.add_argument(
+        "--num_threads",
+        type=int,
+        default=1,
+        help="Number of threads to use in PyTorch."
     )
 
     args = parser.parse_args()
@@ -197,6 +203,7 @@ def preprocess_function(
 def main() -> None:
     """main"""
     args = parse_args()
+    torch.set_num_threads(args.num_threads)
     set_seed(args.seed)
     accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
     config = AutoConfig.from_pretrained(args.model_name_or_path)
@@ -207,6 +214,7 @@ def main() -> None:
         low_cpu_mem_usage=True,
         quantization_config=get_bnb_config(),
     )
+
     if args.peft_path:
         model = PeftModel.from_pretrained(model, args.peft_path)
     else:
@@ -220,20 +228,20 @@ def main() -> None:
 
     model.print_trainable_parameters()
 
-    plot_data = None
-    if args.plot_file and args.plot_file.exists():
-        with args.plot_file.open("r", encoding="utf-8") as plot_file:
-            plot_data = json.load(plot_file)
-
-    evaluator = Evaluator(
-        args.output_dir,
-        tokenizer,
-        data=plot_data,
-        max_length=args.max_length,
-        record_interval=args.record_interval,
-    )
-
     if args.num_train_epochs > 0 and args.train_file and args.train_file.exists():
+        plot_data = None
+        if args.plot_file and args.plot_file.exists():
+            with args.plot_file.open("r", encoding="utf-8") as plot_file:
+                plot_data = json.load(plot_file)
+
+        evaluator = Evaluator(
+            args.output_dir,
+            tokenizer,
+            data=plot_data,
+            max_length=args.max_length,
+            record_interval=args.record_interval,
+        )
+
         with args.train_file.open("r", encoding="utf-8") as train_file:
             train_data = json.load(train_file)
 
@@ -253,7 +261,7 @@ def main() -> None:
             name=args.lr_scheduler_type,
             optimizer=optimizer,
             num_warmup_steps=args.num_warmup_steps * accelerator.num_processes,
-            num_training_steps=num_training_steps
+            num_training_steps=num_training_steps * accelerator.num_processes
         )
         model, optimizer, train_dataset, lr_scheduler = accelerator.prepare(
             model, optimizer, train_dataset, lr_scheduler
@@ -316,23 +324,22 @@ def main() -> None:
 
         model.eval()
         with torch.no_grad():
-            for batch in tqdm(instructions, desc="Prediction", unit_scale=True, colour="red"):
-                input_ids = tokenizer(
-                    batch, return_tensors="pt", add_special_tokens=False
-                )["input_ids"].to(accelerator.device)
+            for instruction in tqdm(instructions, desc="Prediction", unit_scale=True, colour="red"):
+                inputs = tokenizer(
+                    instruction, return_tensors="pt", add_special_tokens=False
+                ).to(model.device)
 
-                generated_tokens = model.generate(input_ids=input_ids, max_length=args.max_length)
-                generated_tokens = generated_tokens.cpu().numpy()
+                outputs = model.generate(
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs["attention_mask"],
+                    max_new_tokens=128,
+                )
 
-                if isinstance(generated_tokens, tuple):
-                    generated_tokens = generated_tokens[0]
+                decoded_input = tokenizer.decode(inputs["input_ids"][0], skip_special_tokens=True)
+                decoded_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-                decoded_inputs = tokenizer.batch_decode(input_ids, skip_special_tokens=True)
-                decoded_preds = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
-
-                for decoded_input, decoded_pred in zip(decoded_inputs, decoded_preds):
-                    cleaned_pred = decoded_pred[len(decoded_input):].strip().replace("�", "")
-                    predictions.append(cleaned_pred)
+                prediction = decoded_output[len(decoded_input):].strip().replace("�", "")
+                predictions.append(prediction)
 
         outputs = [
             {"id": item["id"], "output": prediction}
