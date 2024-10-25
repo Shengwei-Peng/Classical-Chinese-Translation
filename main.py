@@ -297,6 +297,7 @@ def main() -> None:
             if args.output_dir is not None:
                 accelerator.wait_for_everyone()
                 unwrapped_model = accelerator.unwrap_model(model)
+
                 for param in unwrapped_model.parameters():
                     param.data = param.data.contiguous()
 
@@ -308,10 +309,24 @@ def main() -> None:
                     is_main_process=accelerator.is_main_process,
                     save_function=accelerator.save
                 )
-                if accelerator.is_main_process:
-                    tokenizer.save_pretrained(epoch_output_dir)
 
-        evaluator.save_history()
+        if args.output_dir is not None:
+            accelerator.wait_for_everyone()
+            unwrapped_model = accelerator.unwrap_model(model)
+
+            for param in unwrapped_model.parameters():
+                param.data = param.data.contiguous()
+
+            unwrapped_model.save_pretrained(
+                args.output_dir,
+                is_main_process=accelerator.is_main_process,
+                save_function=accelerator.save
+            )
+
+            if accelerator.is_main_process:
+                tokenizer.save_pretrained(epoch_output_dir)
+                evaluator.save_history()
+
         if args.plot:
             evaluator.plot_learning_curves()
 
@@ -327,7 +342,11 @@ def main() -> None:
         with torch.no_grad():
             for instruction in tqdm(instructions, desc="Prediction", unit_scale=True, colour="red"):
                 inputs = tokenizer(instruction, return_tensors="pt").to(model.device)
-                outputs = model.generate(**inputs, max_new_tokens=128)
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=128,
+                    pad_token_id=tokenizer.eos_token_id
+                )
 
                 generated_text = tokenizer.decode(
                     outputs[0, inputs['input_ids'].shape[1]:], skip_special_tokens=True
