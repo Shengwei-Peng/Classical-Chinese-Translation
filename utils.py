@@ -3,7 +3,7 @@ from transformers import BitsAndBytesConfig
 import torch
 
 
-def get_prompt(instruction: str, mode: str = None) -> str:
+def get_prompt(instruction: str, strategy: str = None) -> str:
     '''Format the instruction as a prompt for LLM.'''
     examples = [
         {
@@ -28,16 +28,16 @@ def get_prompt(instruction: str, mode: str = None) -> str:
         },
     ]
 
-    if mode == "zero-shot":
+    if strategy == "zero-shot":
         prompt = (
             "你是一位技術精湛的翻譯家，精通古典漢語（文言文、古文）。"
             "你的任務是將提供的現代中文文字翻譯成古典中文，反之亦然，具體取決於說明。"
             "保留翻譯中的原始含義、語氣和細微差別至關重要。"
-            "確保翻譯文本保持正確的語法、拼字和標點符號，並遵守文言文的文體慣例。\n"
+            "確保翻譯文本保持正確的語法、拼字和標點符號，並遵守文言文的文體慣例。"
             f"<start_of_turn>user\n{instruction}<end_of_turn>\n<start_of_turn>model\n"
         )
 
-    elif mode == "few-shot":
+    elif strategy == "few-shot":
         prompt = "".join(
             f"<start_of_turn>user\n{example['instruction']}<end_of_turn>\n"
             f"<start_of_turn>model\n{example['output']}<end_of_turn>\n"

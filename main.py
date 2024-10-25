@@ -12,13 +12,7 @@ from tqdm.auto import tqdm
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 from peft import PeftModel, LoraConfig, get_peft_model
-from transformers import (
-    AutoConfig,
-    AutoTokenizer,
-    AutoModelForCausalLM,
-    SchedulerType,
-    get_scheduler
-)
+from transformers import AutoTokenizer, AutoModelForCausalLM, SchedulerType, get_scheduler
 
 from utils import get_bnb_config, get_prompt
 from src import Evaluator
@@ -152,6 +146,13 @@ def parse_args() -> argparse.Namespace:
         help="Whether to plot learning curves."
     )
     parser.add_argument(
+        "--strategy",
+        type=str,
+        default=None,
+        choices=["zero-shot", "few-shot"],
+        help="Choose the translation strategy: 'zero-shot' or 'few-shot'."
+    )
+    parser.add_argument(
         "--num_threads",
         type=int,
         default=1,
@@ -206,13 +207,12 @@ def main() -> None:
     torch.set_num_threads(args.num_threads)
     set_seed(args.seed)
     accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
-    config = AutoConfig.from_pretrained(args.model_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name_or_path,
-        config=config,
+        torch_dtype=torch.bfloat16,
         low_cpu_mem_usage=True,
-        quantization_config=get_bnb_config(),
+        quantization_config=get_bnb_config()
     )
 
     if args.peft_path:
@@ -257,14 +257,14 @@ def main() -> None:
         )
 
         optimizer = AdamW(model.parameters(), lr=args.learning_rate)
-        lr_scheduler = get_scheduler(
+        scheduler = get_scheduler(
             name=args.lr_scheduler_type,
             optimizer=optimizer,
             num_warmup_steps=args.num_warmup_steps * accelerator.num_processes,
             num_training_steps=num_training_steps * accelerator.num_processes
         )
-        model, optimizer, train_dataset, lr_scheduler = accelerator.prepare(
-            model, optimizer, train_dataset, lr_scheduler
+        model, optimizer, train_dataset, scheduler = accelerator.prepare(
+            model, optimizer, train_dataset, scheduler
         )
 
         loss_fct = torch.nn.CrossEntropyLoss()
@@ -286,8 +286,8 @@ def main() -> None:
                     loss = loss_fct(shift_logits.transpose(1, 2), shift_label)
 
                     accelerator.backward(loss)
+                    scheduler.step()
                     optimizer.step()
-                    lr_scheduler.step()
                     optimizer.zero_grad()
 
                 if accelerator.sync_gradients:
@@ -319,27 +319,20 @@ def main() -> None:
         with args.test_file.open("r", encoding="utf-8") as file:
             test_data = json.load(file)
 
-        instructions = [get_prompt(x["instruction"]) for x in test_data]
+        instructions = [get_prompt(x["instruction"], args.strategy) for x in test_data]
         predictions = []
 
+        model = accelerator.prepare(model)
         model.eval()
         with torch.no_grad():
             for instruction in tqdm(instructions, desc="Prediction", unit_scale=True, colour="red"):
-                inputs = tokenizer(
-                    instruction, return_tensors="pt", add_special_tokens=False
-                ).to(model.device)
+                inputs = tokenizer(instruction, return_tensors="pt").to(model.device)
+                outputs = model.generate(**inputs, max_new_tokens=128)
 
-                outputs = model.generate(
-                    input_ids=inputs["input_ids"],
-                    attention_mask=inputs["attention_mask"],
-                    max_new_tokens=128,
+                generated_text = tokenizer.decode(
+                    outputs[0, inputs['input_ids'].shape[1]:], skip_special_tokens=True
                 )
-
-                decoded_input = tokenizer.decode(inputs["input_ids"][0], skip_special_tokens=True)
-                decoded_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-                prediction = decoded_output[len(decoded_input):].strip().replace("�", "")
-                predictions.append(prediction)
+                predictions.append(generated_text.strip().replace("�", ""))
 
         outputs = [
             {"id": item["id"], "output": prediction}
